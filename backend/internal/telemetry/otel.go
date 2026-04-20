@@ -23,10 +23,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -104,6 +107,13 @@ func Init(ctx context.Context, cfg Config) (*Providers, ShutdownFunc, error) {
 		propagation.TraceContext{},
 		propagation.Baggage{},
 	))
+
+	// Route OTel's internal errors through zerolog with rate limiting so
+	// an unreachable collector doesn't log the same "produced zero
+	// addresses" / "reader collect and export timeout" line every 10s
+	// forever. We install this globally once per process — any later
+	// Init() calls (tests) will overwrite it with an equivalent handler.
+	installThrottledErrorHandler()
 
 	// Go runtime metrics (goroutines, GC, heap, cpu). Safe to ignore
 	// the error — it only fails when duplicate instruments are
@@ -278,3 +288,49 @@ func firstEnv(keys ...string) string {
 }
 
 func noopShutdown(context.Context) error { return nil }
+
+// throttledErrorHandler is an otel.ErrorHandler that collapses
+// repetitive export failures — the usual symptom of an unreachable
+// OTLP collector — into a single log line per minute, so a single
+// bad endpoint can't drown stdout.
+type throttledErrorHandler struct {
+	mu       sync.Mutex
+	window   time.Duration
+	dropped  atomic.Uint64
+	lastEmit time.Time
+	lastMsg  string
+}
+
+func (h *throttledErrorHandler) Handle(err error) {
+	if err == nil {
+		return
+	}
+	msg := err.Error()
+
+	h.mu.Lock()
+	now := time.Now()
+	// First emit for a given message always goes through; subsequent
+	// occurrences within the window are counted and suppressed.
+	if msg != h.lastMsg || now.Sub(h.lastEmit) >= h.window {
+		dropped := h.dropped.Swap(0)
+		h.lastEmit = now
+		h.lastMsg = msg
+		h.mu.Unlock()
+		ev := log.Warn().Err(err)
+		if dropped > 0 {
+			ev = ev.Uint64("suppressed", dropped)
+		}
+		ev.Msg("otel export error")
+		return
+	}
+	h.mu.Unlock()
+	h.dropped.Add(1)
+}
+
+var installErrorHandlerOnce sync.Once
+
+func installThrottledErrorHandler() {
+	installErrorHandlerOnce.Do(func() {
+		otel.SetErrorHandler(&throttledErrorHandler{window: time.Minute})
+	})
+}
