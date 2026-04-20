@@ -1,0 +1,14 @@
+backend/bin/
+backend/data/
+backend/coverage.out
+backend/.env
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+.env
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+coverage.out
+.DS_Store

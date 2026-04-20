@@ -1,0 +1,37 @@
+// Centralised route paths.  Components import from here instead of
+// sprinkling literal URLs around so renames stay cheap.
+export const paths = {
+  home: { path: "/", getHref: () => "/" },
+  overview: { path: "/overview", getHref: () => "/overview" },
+  analytics: { path: "/analytics", getHref: () => "/analytics" },
+  portfolios: { path: "/portfolios", getHref: () => "/portfolios" },
+  portfolio: {
+    path: "/portfolios/:id",
+    getHref: (id: string) => `/portfolios/${id}`,
+  },
+  positions: { path: "/positions", getHref: () => "/positions" },
+  orders: { path: "/orders", getHref: () => "/orders" },
+  cooldowns: { path: "/cooldowns", getHref: () => "/cooldowns" },
+  rejections: { path: "/rejections", getHref: () => "/rejections" },
+  risk: { path: "/risk", getHref: () => "/risk" },
+  news: { path: "/news", getHref: () => "/news" },
+  signals: { path: "/signals", getHref: () => "/signals" },
+  decisions: { path: "/decisions", getHref: () => "/decisions" },
+  politicians: { path: "/politicians", getHref: () => "/politicians" },
+  politicianTrades: {
+    path: "/politician-trades",
+    getHref: () => "/politician-trades",
+  },
+  insiders: { path: "/insiders", getHref: () => "/insiders" },
+  social: { path: "/social", getHref: () => "/social" },
+  lobbying: { path: "/lobbying", getHref: () => "/lobbying" },
+  contracts: { path: "/contracts", getHref: () => "/contracts" },
+  audit: { path: "/audit", getHref: () => "/audit" },
+  llmCalls: { path: "/llm/calls", getHref: () => "/llm/calls" },
+  llmUsage: { path: "/llm/usage", getHref: () => "/llm/usage" },
+  engine: { path: "/engine", getHref: () => "/engine" },
+  broker: { path: "/broker", getHref: () => "/broker" },
+  quote: { path: "/quote", getHref: () => "/quote" },
+  settings: { path: "/settings", getHref: () => "/settings" },
+  faq: { path: "/faq", getHref: () => "/faq" },
+} as const

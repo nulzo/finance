@@ -1,0 +1,17 @@
+.git
+.github
+.cursor
+.vscode
+bin
+tmp
+data
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+coverage.out
+.env
+.env.*
+!.env.example
+README.md
+docs

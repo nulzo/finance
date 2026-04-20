@@ -1,0 +1,230 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: trader-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ${{ github.repository }}
+  APP_HOST: trader.nulzo.dev
+
+jobs:
+  build-frontend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (Frontend)
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}-frontend
+          tags: |
+            type=raw,value=${{ github.sha }}
+            type=raw,value=latest
+
+      - name: Build and push (Frontend)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          build-args: |
+            VITE_API_URL=
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          provenance: false
+          sbom: false
+
+  build-backend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (Backend)
+        id: meta-backend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}-backend
+          tags: |
+            type=raw,value=${{ github.sha }}
+            type=raw,value=latest
+
+      - name: Build and push (Backend)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+          provenance: false
+          sbom: false
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build-frontend, build-backend]
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout Helm Charts
+        uses: actions/checkout@v4
+        with:
+          repository: nulzo/helm-charts
+          path: charts-repo
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Deploy Backend
+        run: |
+          helm upgrade --install trader-backend ./charts-repo/app \
+            --namespace default \
+            --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}-backend \
+            --set image.tag=${{ github.sha }} \
+            --set image.pullPolicy=Always \
+            --set service.port=8080 \
+            --set service.targetPort=8080 \
+            --set ingress.enabled=false \
+            --set persistence.enabled=true \
+            --set persistence.size=2Gi \
+            --set persistence.mountPath=/app/data \
+            --set "imagePullSecrets[0].name=ghcr-secret" \
+            --set "env[0].name=APP_ENV" \
+            --set-string "env[0].value=production" \
+            --set "env[1].name=HTTP_ADDR" \
+            --set-string "env[1].value=:8080" \
+            --set "env[2].name=LOG_LEVEL" \
+            --set-string "env[2].value=info" \
+            --set "env[3].name=TRADER_MODE" \
+            --set-string "env[3].value=mock" \
+            --set "env[4].name=OTEL_SERVICE_NAME" \
+            --set-string "env[4].value=trader" \
+            --set "env[5].name=OTEL_EXPORTER_OTLP_ENDPOINT" \
+            --set-string "env[5].value=otel-collector.observability.svc.cluster.local:4317" \
+            --set "env[6].name=OTEL_EXPORTER_OTLP_INSECURE" \
+            --set-string "env[6].value=true" \
+            --set "env[7].name=OTEL_RESOURCE_ATTRIBUTES" \
+            --set-string "env[7].value=deployment.environment=production,service.namespace=trader" \
+            --set "env[8].name=LLM_BASE_URL" \
+            --set-string "env[8].value=http://model-router-api-app.default.svc.cluster.local:8080/v1" \
+            --set "env[9].name=LLM_MODEL" \
+            --set-string "env[9].value=google/gemini-3.1-flash-lite-preview" \
+            --set "env[10].name=ALLOWED_ORIGIN" \
+            --set-string "env[10].value=https://${{ env.APP_HOST }}" \
+            --set "env[11].name=API_TOKEN" \
+            --set-string "env[11].value=${{ secrets.TRADER_API_TOKEN }}" \
+            --set "env[12].name=QUIVER_TOKEN" \
+            --set-string "env[12].value=${{ secrets.QUIVER_TOKEN }}" \
+            --set "env[13].name=FINNHUB_KEY" \
+            --set-string "env[13].value=${{ secrets.FINNHUB_KEY }}" \
+            --set "env[14].name=NEWSAPI_KEY" \
+            --set-string "env[14].value=${{ secrets.NEWSAPI_KEY }}" \
+            --set "env[15].name=ALPACA_API_KEY" \
+            --set-string "env[15].value=${{ secrets.ALPACA_API_KEY }}" \
+            --set "env[16].name=ALPACA_API_SECRET" \
+            --set-string "env[16].value=${{ secrets.ALPACA_API_SECRET }}" \
+            --set "env[17].name=ALPHAVANTAGE_KEY" \
+            --set-string "env[17].value=${{ secrets.ALPHAVANTAGE_KEY }}" \
+            --set livenessProbe.httpGet.path=/livez \
+            --set livenessProbe.httpGet.port=8080 \
+            --set livenessProbe.initialDelaySeconds=10 \
+            --set livenessProbe.periodSeconds=20 \
+            --set readinessProbe.httpGet.path=/readyz \
+            --set readinessProbe.httpGet.port=8080 \
+            --set readinessProbe.initialDelaySeconds=5 \
+            --set readinessProbe.periodSeconds=10 \
+            --wait --timeout=10m
+
+      - name: Deploy Frontend
+        run: |
+          helm upgrade --install trader-frontend ./charts-repo/app \
+            --namespace default \
+            --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}-frontend \
+            --set image.tag=${{ github.sha }} \
+            --set image.pullPolicy=Always \
+            --set service.port=80 \
+            --set service.targetPort=80 \
+            --set ingress.enabled=true \
+            --set ingress.className=traefik \
+            --set "ingress.hosts[0].host=${{ env.APP_HOST }}" \
+            --set "ingress.hosts[0].paths[0].path=/" \
+            --set "ingress.hosts[0].paths[0].pathType=Prefix" \
+            --set "imagePullSecrets[0].name=ghcr-secret" \
+            --set "env[0].name=BACKEND_HOST" \
+            --set-string "env[0].value=trader-backend-app" \
+            --set "env[1].name=BACKEND_PORT" \
+            --set-string "env[1].value=8080" \
+            --set "env[2].name=PORT" \
+            --set-string "env[2].value=80" \
+            --set livenessProbe.httpGet.path=/health \
+            --set livenessProbe.httpGet.port=80 \
+            --set readinessProbe.httpGet.path=/health \
+            --set readinessProbe.httpGet.port=80 \
+            --wait --timeout=5m
