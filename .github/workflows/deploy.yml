@@ -173,7 +173,7 @@ jobs:
             --set "env[7].name=LLM_MODEL" \
             --set-string "env[7].value=${{ vars.LLM_MODEL != '' && vars.LLM_MODEL || 'google/gemini-3.1-flash-lite-preview' }}" \
             --set "env[8].name=LLM_FALLBACK_MODELS" \
-            --set-string "env[8].value=${{ vars.LLM_FALLBACK_MODELS != '' && vars.LLM_FALLBACK_MODELS || 'anthropic/claude-3.5-haiku,google/gemini-2.0-flash,ollama/llama3.1' }}" \
+            --set-string "env[8].value=${{ vars.LLM_FALLBACK_MODELS != '' && vars.LLM_FALLBACK_MODELS || 'anthropic/claude-3.5-haiku\,google/gemini-2.0-flash\,ollama/llama3.1' }}" \
             --set "env[9].name=ALLOWED_ORIGIN" \
             --set-string "env[9].value=https://${{ env.APP_HOST }}" \
             --set "env[10].name=API_TOKEN" \
