@@ -172,22 +172,24 @@ jobs:
             --set-string "env[6].value=${{ vars.LLM_BASE_URL != '' && vars.LLM_BASE_URL || 'http://192.168.1.249:8080/api/v1' }}" \
             --set "env[7].name=LLM_MODEL" \
             --set-string "env[7].value=${{ vars.LLM_MODEL != '' && vars.LLM_MODEL || 'google/gemini-3.1-flash-lite-preview' }}" \
-            --set "env[8].name=ALLOWED_ORIGIN" \
-            --set-string "env[8].value=https://${{ env.APP_HOST }}" \
-            --set "env[9].name=API_TOKEN" \
-            --set-string "env[9].value=${{ secrets.TRADER_API_TOKEN }}" \
-            --set "env[10].name=QUIVER_TOKEN" \
-            --set-string "env[10].value=${{ secrets.QUIVER_TOKEN }}" \
-            --set "env[11].name=FINNHUB_KEY" \
-            --set-string "env[11].value=${{ secrets.FINNHUB_KEY }}" \
-            --set "env[12].name=NEWSAPI_KEY" \
-            --set-string "env[12].value=${{ secrets.NEWSAPI_KEY }}" \
-            --set "env[13].name=ALPACA_API_KEY" \
-            --set-string "env[13].value=${{ secrets.ALPACA_API_KEY }}" \
-            --set "env[14].name=ALPACA_API_SECRET" \
-            --set-string "env[14].value=${{ secrets.ALPACA_API_SECRET }}" \
-            --set "env[15].name=ALPHAVANTAGE_KEY" \
-            --set-string "env[15].value=${{ secrets.ALPHAVANTAGE_KEY }}" \
+            --set "env[8].name=LLM_FALLBACK_MODELS" \
+            --set-string "env[8].value=${{ vars.LLM_FALLBACK_MODELS != '' && vars.LLM_FALLBACK_MODELS || 'anthropic/claude-3.5-haiku,google/gemini-2.0-flash,ollama/llama3.1' }}" \
+            --set "env[9].name=ALLOWED_ORIGIN" \
+            --set-string "env[9].value=https://${{ env.APP_HOST }}" \
+            --set "env[10].name=API_TOKEN" \
+            --set-string "env[10].value=${{ secrets.TRADER_API_TOKEN }}" \
+            --set "env[11].name=QUIVER_TOKEN" \
+            --set-string "env[11].value=${{ secrets.QUIVER_TOKEN }}" \
+            --set "env[12].name=FINNHUB_KEY" \
+            --set-string "env[12].value=${{ secrets.FINNHUB_KEY }}" \
+            --set "env[13].name=NEWSAPI_KEY" \
+            --set-string "env[13].value=${{ secrets.NEWSAPI_KEY }}" \
+            --set "env[14].name=ALPACA_API_KEY" \
+            --set-string "env[14].value=${{ secrets.ALPACA_API_KEY }}" \
+            --set "env[15].name=ALPACA_API_SECRET" \
+            --set-string "env[15].value=${{ secrets.ALPACA_API_SECRET }}" \
+            --set "env[16].name=ALPHAVANTAGE_KEY" \
+            --set-string "env[16].value=${{ secrets.ALPHAVANTAGE_KEY }}" \
             --set livenessProbe.httpGet.path=/livez \
             --set livenessProbe.httpGet.port=8080 \
             --set livenessProbe.initialDelaySeconds=10 \
