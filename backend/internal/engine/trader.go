@@ -483,8 +483,9 @@ func (e *Engine) Ingest(ctx context.Context) error {
 
 	// Regenerate signals from strategies. Independent deadline from the
 	// ingest steps above so a slow external fetch cannot starve local DB
-	// work.
-	sctx, scancel := context.WithTimeout(ictx, 60*time.Second)
+	// work. We give it 3 minutes because momentum strategy fetches
+	// technicals for the entire universe.
+	sctx, scancel := context.WithTimeout(ictx, 3*time.Minute)
 	defer scancel()
 	return e.regenerateSignals(sctx)
 }
@@ -769,7 +770,7 @@ func (e *Engine) regenerateSignals(ctx context.Context) error {
 	upserted := 0
 	for i := range all {
 		if err := e.deps.Store.Signals.Upsert(ctx, &all[i]); err != nil {
-			e.deps.Log.Debug().Err(err).Msg("upsert signal")
+			e.deps.Log.Warn().Err(err).Msg("upsert signal")
 			continue
 		}
 		upserted++
