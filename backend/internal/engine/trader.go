@@ -406,6 +406,7 @@ func (e *Engine) Ingest(ctx context.Context) error {
 		for _, it := range items {
 			ok, err := e.deps.Store.News.Insert(nctx, &it)
 			if err != nil {
+				e.deps.Log.Warn().Err(err).Str("title", truncate(it.Title, 80)).Msg("insert news")
 				continue
 			}
 			if !ok {
@@ -426,14 +427,14 @@ func (e *Engine) Ingest(ctx context.Context) error {
 					if firstEnrichErr == nil {
 						firstEnrichErr = err
 					}
-					e.deps.Log.Debug().Err(err).Str("title", truncate(it.Title, 80)).Msg("news enrich failed")
+					e.deps.Log.Warn().Err(err).Str("title", truncate(it.Title, 80)).Msg("news enrich failed")
 					continue
 				}
 				if analysis == nil {
 					continue
 				}
 				if err := e.deps.Store.News.UpdateSentiment(ictx, it.ID, analysis.Sentiment, analysis.Relevance, strings.Join(analysis.Symbols, ",")); err != nil {
-					e.deps.Log.Debug().Err(err).Msg("news update sentiment")
+					e.deps.Log.Warn().Err(err).Msg("news update sentiment")
 					continue
 				}
 				enriched++
@@ -529,7 +530,7 @@ func (e *Engine) ingestQuiver(ctx context.Context) {
 		for i := range trades {
 			ok, err := e.deps.Store.Insiders.Insert(cctx, &trades[i])
 			if err != nil {
-				e.deps.Log.Debug().Err(err).Str("symbol", trades[i].Symbol).Msg("insert insider")
+				e.deps.Log.Warn().Err(err).Str("symbol", trades[i].Symbol).Msg("insert insider")
 				continue
 			}
 			if ok {
@@ -550,6 +551,7 @@ func (e *Engine) ingestQuiver(ctx context.Context) {
 		for i := range posts {
 			ok, err := e.deps.Store.Social.Insert(cctx, &posts[i])
 			if err != nil {
+				e.deps.Log.Warn().Err(err).Str("symbol", posts[i].Symbol).Msg("insert wsb post")
 				continue
 			}
 			if ok {
@@ -571,6 +573,7 @@ func (e *Engine) ingestQuiver(ctx context.Context) {
 		for i := range posts {
 			ok, err := e.deps.Store.Social.Insert(cctx, &posts[i])
 			if err != nil {
+				e.deps.Log.Warn().Err(err).Str("symbol", posts[i].Symbol).Msg("insert twitter post")
 				continue
 			}
 			if ok {
@@ -591,6 +594,7 @@ func (e *Engine) ingestQuiver(ctx context.Context) {
 		for i := range events {
 			ok, err := e.deps.Store.Lobbying.Insert(cctx, &events[i])
 			if err != nil {
+				e.deps.Log.Warn().Err(err).Str("symbol", events[i].Symbol).Msg("insert lobbying event")
 				continue
 			}
 			if ok {
@@ -611,6 +615,7 @@ func (e *Engine) ingestQuiver(ctx context.Context) {
 		for i := range contracts {
 			ok, err := e.deps.Store.Contracts.Insert(cctx, &contracts[i])
 			if err != nil {
+				e.deps.Log.Warn().Err(err).Str("symbol", contracts[i].Symbol).Msg("insert gov contract")
 				continue
 			}
 			if ok {
@@ -631,6 +636,7 @@ func (e *Engine) ingestQuiver(ctx context.Context) {
 		upserted := 0
 		for i := range rows {
 			if err := e.deps.Store.Shorts.Upsert(cctx, &rows[i]); err != nil {
+				e.deps.Log.Warn().Err(err).Str("symbol", rows[i].Symbol).Msg("upsert short volume")
 				continue
 			}
 			upserted++
@@ -654,7 +660,7 @@ func (e *Engine) regenerateSignals(ctx context.Context) error {
 	// table doesn't grow unbounded. 24h is much longer than any
 	// cooldown we install so it's always safe.
 	if _, err := e.deps.Store.Cooldowns.PurgeExpired(ctx, time.Now().UTC().Add(-24*time.Hour)); err != nil {
-		e.deps.Log.Debug().Err(err).Msg("purge expired cooldowns")
+		e.deps.Log.Warn().Err(err).Msg("purge expired cooldowns")
 	}
 
 	// Pre-load politician track_weights so PoliticianFollow can apply
@@ -670,7 +676,7 @@ func (e *Engine) regenerateSignals(ctx context.Context) error {
 			weightBy[strings.ToLower(strings.TrimSpace(p.Name))] = w
 		}
 	} else {
-		e.deps.Log.Debug().Err(err).Msg("list politicians for weights")
+		e.deps.Log.Warn().Err(err).Msg("list politicians for weights")
 	}
 
 	pf := &strategy.PoliticianFollow{
@@ -818,7 +824,7 @@ func (e *Engine) DecideAndTrade(ctx context.Context) error {
 	if cap := riskLimits.MaxDailyOrders; cap > 0 {
 		submitted, err := e.deps.Store.Orders.CountSubmittedSince(dctx, e.deps.PortfolioID, dayStart)
 		if err != nil {
-			e.deps.Log.Debug().Err(err).Msg("count submitted today")
+			e.deps.Log.Warn().Err(err).Msg("count submitted today")
 		} else if submitted >= cap {
 			e.deps.Log.Info().
 				Int("submitted", submitted).
@@ -1443,7 +1449,7 @@ func (e *Engine) maybeTripBrokerBreaker(ctx context.Context, portfolioID string)
 	since := time.Now().UTC().Add(-e.deps.AutoDisableBrokerWindow)
 	n, err := e.deps.Store.Rejections.CountSince(ctx, portfolioID, storage.RejectionSourceBroker, since)
 	if err != nil {
-		e.deps.Log.Debug().Err(err).Msg("breaker: count rejections")
+		e.deps.Log.Warn().Err(err).Msg("breaker: count rejections")
 		return
 	}
 	if n <= e.deps.AutoDisableBrokerRejects {
@@ -1591,7 +1597,7 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 		o := &open[i]
 		bo, err := e.deps.Broker.GetOrder(rctx, o.BrokerID)
 		if err != nil {
-			e.deps.Log.Debug().Err(err).Str("order", o.ID).Str("broker_id", o.BrokerID).Msg("reconcile get_order")
+			e.deps.Log.Warn().Err(err).Str("order", o.ID).Str("broker_id", o.BrokerID).Msg("reconcile get_order")
 			continue
 		}
 		if bo.Status == o.Status && bo.FilledQty.Equal(o.FilledQty) {
@@ -1710,7 +1716,7 @@ func (e *Engine) sweepStaleOrders(ctx context.Context) {
 	cutoff := time.Now().UTC().Add(-e.deps.OrderStaleTimeout)
 	open, err := e.deps.Store.Orders.ListOpen(ctx, e.deps.PortfolioID, 200)
 	if err != nil {
-		e.deps.Log.Debug().Err(err).Msg("stale sweep: list open")
+		e.deps.Log.Warn().Err(err).Msg("stale sweep: list open")
 		return
 	}
 	for i := range open {
