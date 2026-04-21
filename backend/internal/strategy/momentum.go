@@ -104,36 +104,68 @@ func (m *Momentum) Generate(ctx context.Context) ([]domain.Signal, error) {
 	sort.Strings(clean)
 
 	out := make([]domain.Signal, 0, len(clean))
-	for _, sym := range clean {
-		tech, err := m.Technicals.Snapshot(ctx, sym)
-		if err != nil || tech == nil {
-			continue
-		}
-		c, ok := classifyMomentum(tech)
-		if !ok {
-			continue
-		}
-		if c.conf < m.MinConfidence {
-			continue
-		}
-		score := c.score
-		if c.side == domain.SideSell {
-			score = -math.Abs(score)
-		} else {
-			score = math.Abs(score)
-		}
-		reason := fmt.Sprintf("momentum %s: %s", c.kind, strings.Join(c.reasons, "; "))
-		out = append(out, domain.Signal{
-			Kind:       domain.SignalKindMomentum,
-			Symbol:     sym,
-			Side:       c.side,
-			Score:      round2(score),
-			Confidence: round2(c.conf),
-			Reason:     reason,
-			RefID:      fmt.Sprintf("momentum:%s:%s:%s:%s", sym, c.side, c.kind, day),
-			ExpiresAt:  now.Add(2 * 24 * time.Hour),
-		})
+	
+	type result struct {
+		sig *domain.Signal
 	}
+	
+	resCh := make(chan result, len(clean))
+	sem := make(chan struct{}, 10) // Limit concurrency to 10
+	
+	for _, sym := range clean {
+		sym := sym
+		go func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			
+			tech, err := m.Technicals.Snapshot(ctx, sym)
+			if err != nil || tech == nil {
+				resCh <- result{nil}
+				return
+			}
+			c, ok := classifyMomentum(tech)
+			if !ok || c.conf < m.MinConfidence {
+				resCh <- result{nil}
+				return
+			}
+			
+			score := c.score
+			if c.side == domain.SideSell {
+				score = -math.Abs(score)
+			} else {
+				score = math.Abs(score)
+			}
+			reason := fmt.Sprintf("momentum %s: %s", c.kind, strings.Join(c.reasons, "; "))
+			
+			sig := domain.Signal{
+				Kind:       domain.SignalKindMomentum,
+				Symbol:     sym,
+				Side:       c.side,
+				Score:      round2(score),
+				Confidence: round2(c.conf),
+				Reason:     reason,
+				RefID:      fmt.Sprintf("momentum:%s:%s:%s:%s", sym, c.side, c.kind, day),
+				ExpiresAt:  now.Add(2 * 24 * time.Hour),
+			}
+			resCh <- result{&sig}
+		}()
+	}
+	
+	for i := 0; i < len(clean); i++ {
+		res := <-resCh
+		if res.sig != nil {
+			out = append(out, *res.sig)
+		}
+	}
+	
+	// Sort to ensure deterministic output
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Symbol != out[j].Symbol {
+			return out[i].Symbol < out[j].Symbol
+		}
+		return out[i].RefID < out[j].RefID
+	})
+
 	return out, nil
 }
 

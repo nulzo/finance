@@ -376,7 +376,7 @@ func (s *Server) engineToggle(c *gin.Context) {
 }
 
 func (s *Server) engineIngest(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Minute)
 	defer cancel()
 	if err := s.Deps.Engine.Ingest(ctx); err != nil {
 		s.serverError(c, err)
@@ -386,7 +386,7 @@ func (s *Server) engineIngest(c *gin.Context) {
 }
 
 func (s *Server) engineDecide(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Minute)
 	defer cancel()
 	if err := s.Deps.Engine.DecideAndTrade(ctx); err != nil {
 		s.serverError(c, err)

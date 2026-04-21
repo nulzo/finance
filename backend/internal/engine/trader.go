@@ -484,9 +484,9 @@ func (e *Engine) Ingest(ctx context.Context) error {
 
 	// Regenerate signals from strategies. Independent deadline from the
 	// ingest steps above so a slow external fetch cannot starve local DB
-	// work. We give it 3 minutes because momentum strategy fetches
+	// work. We give it 10 minutes because momentum strategy fetches
 	// technicals for the entire universe.
-	sctx, scancel := context.WithTimeout(ictx, 3*time.Minute)
+	sctx, scancel := context.WithTimeout(ictx, 10*time.Minute)
 	defer scancel()
 	return e.regenerateSignals(sctx)
 }
