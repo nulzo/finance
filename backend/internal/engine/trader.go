@@ -352,10 +352,18 @@ func (e *Engine) runTick(ctx context.Context, name string, fn func(context.Conte
 // the pipeline cascade-fail with "context deadline exceeded" the moment
 // any one stage went slow.
 func (e *Engine) Ingest(ctx context.Context) error {
+	// Give the ingest loop most of the interval budget.
+	timeout := e.deps.IngestInterval - 10*time.Second
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	ictx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	// Politician trades.
 	since := time.Now().UTC().Add(-30 * 24 * time.Hour)
 	if e.deps.Congress != nil {
-		cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		cctx, ccancel := context.WithTimeout(ictx, 90*time.Second)
 		trades, err := e.deps.Congress.Fetch(cctx, since)
 		if err != nil {
 			e.deps.Log.Warn().Err(err).Msg("congress fetch")
@@ -381,12 +389,12 @@ func (e *Engine) Ingest(ctx context.Context) error {
 			telemetry.App.CongressFetched.Add(cctx, int64(len(trades)-inserted),
 				metric.WithAttributes(attribute.String("stage", "deduped")))
 		}
-		cancel()
+		ccancel()
 	}
 
 	// News.
 	if e.deps.News != nil {
-		nctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		nctx, ncancel := context.WithTimeout(ictx, 60*time.Second)
 		items, err := e.deps.News.Fetch(nctx, time.Now().UTC().Add(-24*time.Hour))
 		if err != nil {
 			e.deps.Log.Warn().Err(err).Msg("news fetch")
@@ -406,10 +414,10 @@ func (e *Engine) Ingest(ctx context.Context) error {
 			inserted++
 			if e.deps.LLM != nil && e.deps.LLM.Available() {
 				// LLM enrichment gets a deadline derived from the parent
-				// request context (ctx), NOT nctx. The news-fetch budget
+				// request context (ictx), NOT nctx. The news-fetch budget
 				// is intentionally tight; enrichment is a slower, best-
 				// effort pass that shouldn't inherit its siblings' clock.
-				actx, acancel := context.WithTimeout(ctx, 30*time.Second)
+				actx, acancel := context.WithTimeout(ictx, 30*time.Second)
 				actx = llm.WithOperation(actx, "news.analyse")
 				analysis, model, err := e.deps.LLM.AnalyseNews(actx, it.Title, it.Summary)
 				acancel()
@@ -424,7 +432,7 @@ func (e *Engine) Ingest(ctx context.Context) error {
 				if analysis == nil {
 					continue
 				}
-				if err := e.deps.Store.News.UpdateSentiment(ctx, it.ID, analysis.Sentiment, analysis.Relevance, strings.Join(analysis.Symbols, ",")); err != nil {
+				if err := e.deps.Store.News.UpdateSentiment(ictx, it.ID, analysis.Sentiment, analysis.Relevance, strings.Join(analysis.Symbols, ",")); err != nil {
 					e.deps.Log.Debug().Err(err).Msg("news update sentiment")
 					continue
 				}
@@ -444,12 +452,12 @@ func (e *Engine) Ingest(ctx context.Context) error {
 		}
 		evt.Msg("news ingest")
 		if telemetry.App.NewsFetched != nil {
-			telemetry.App.NewsFetched.Add(ctx, int64(inserted),
+			telemetry.App.NewsFetched.Add(ictx, int64(inserted),
 				metric.WithAttributes(attribute.String("stage", "inserted")))
-			telemetry.App.NewsEnriched.Add(ctx, int64(enriched),
+			telemetry.App.NewsEnriched.Add(ictx, int64(enriched),
 				metric.WithAttributes(attribute.String("outcome", "ok")))
 			if enrichErrs > 0 {
-				telemetry.App.NewsEnriched.Add(ctx, int64(enrichErrs),
+				telemetry.App.NewsEnriched.Add(ictx, int64(enrichErrs),
 					metric.WithAttributes(attribute.String("outcome", "error")))
 			}
 		}
@@ -460,7 +468,7 @@ func (e *Engine) Ingest(ctx context.Context) error {
 				Int("total", inserted).
 				Msg("news LLM enrichment failed for at least one item; set LOG_LEVEL=debug for per-item errors")
 		}
-		cancel()
+		ncancel()
 	}
 
 	// Wave 4 — Quiver alt-data: insider Form 4 filings, WSB /
@@ -470,14 +478,14 @@ func (e *Engine) Ingest(ctx context.Context) error {
 	// dataset runs inside its own bounded deadline so one slow
 	// endpoint can't starve its siblings.
 	if e.deps.Quiver != nil && e.deps.Quiver.Available() {
-		e.ingestQuiver(ctx)
+		e.ingestQuiver(ictx)
 	}
 
 	// Regenerate signals from strategies. Independent deadline from the
 	// ingest steps above so a slow external fetch cannot starve local DB
 	// work.
-	sctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
+	sctx, scancel := context.WithTimeout(ictx, 60*time.Second)
+	defer scancel()
 	return e.regenerateSignals(sctx)
 }
 
@@ -785,7 +793,13 @@ func (e *Engine) regenerateSignals(ctx context.Context) error {
 // order cap has already been hit; if so the tick no-ops entirely
 // rather than burning LLM tokens on guaranteed-reject evaluations.
 func (e *Engine) DecideAndTrade(ctx context.Context) error {
-	dctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	// Give the decide loop most of the interval budget so it has time
+	// to evaluate all candidates through the LLM.
+	timeout := e.deps.DecideInterval - 10*time.Second
+	if timeout <= 0 {
+		timeout = 90 * time.Second
+	}
+	dctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// Daily-loss breaker runs before any work — cheapest way to
@@ -1102,11 +1116,12 @@ func (e *Engine) evaluate(ctx context.Context, m strategy.Merged) error {
 			}
 		}
 
-		// lctx = LLM context. Named distinctly from the outer dctx so
-		// static checkers don't flag shadowing (and so it's obvious
-		// which deadline governs this block).
-		lctx := llm.WithOperation(ctx, "engine.decide")
+		// lctx = LLM context. We give the LLM call a dedicated 30s timeout
+		// so it can't eat the entire tick budget if the provider hangs.
+		lctx, lcancel := context.WithTimeout(ctx, 30*time.Second)
+		lctx = llm.WithOperation(lctx, "engine.decide")
 		rat, model, err := e.deps.LLM.Decide(lctx, req)
+		lcancel()
 		if err != nil {
 			// Note: the error here is the aggregated chain across
 			// primary + all fallback models. A "model not found" at
