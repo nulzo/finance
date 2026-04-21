@@ -167,7 +167,7 @@ jobs:
             --set "env[4].name=OTEL_SERVICE_NAME" \
             --set-string "env[4].value=trader" \
             --set "env[5].name=OTEL_RESOURCE_ATTRIBUTES" \
-            --set-string "env[5].value=deployment.environment=production,service.namespace=trader" \
+            --set-string "env[5].value=deployment.environment=production\,service.namespace=trader" \
             --set "env[6].name=LLM_BASE_URL" \
             --set-string "env[6].value=${{ vars.LLM_BASE_URL != '' && vars.LLM_BASE_URL || 'http://192.168.1.249:8080/api/v1' }}" \
             --set "env[7].name=LLM_MODEL" \
